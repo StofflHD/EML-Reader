@@ -1,0 +1,94 @@
+Return-Path: <bounce+4711@mailer.example.org>
+Delivered-To: max@example.com
+Received: from mx.example.com (localhost [127.0.0.1])
+	by mx.example.com (Postfix) with LMTP id 9A1B2C3D
+	for <max@example.com>; Wed, 04 Nov 2026 10:30:09 +0100 (CET)
+Received: from smtp.example.org (smtp.example.org [192.0.2.25])
+	(using TLSv1.3 with cipher TLS_AES_256_GCM_SHA384 (256/256 bits))
+	by mx.example.com (Postfix) with ESMTPS id 4F5E6D7C
+	for <max@example.com>; Wed, 04 Nov 2026 10:30:07 +0100 (CET)
+Received: from [10.0.0.12] (pc12.lan.example.org [10.0.0.12])
+	by smtp.example.org (Postfix) with ESMTPSA id 1122AABB;
+	Wed, 04 Nov 2026 10:30:02 +0100 (CET)
+Authentication-Results: mx.example.com;
+	dkim=pass (2048-bit key; unprotected) header.d=example.org header.i=@example.org header.s=mail2026 header.b=AbCdEfGh;
+	spf=pass (mx.example.com: domain of bounce+4711@mailer.example.org designates 192.0.2.25 as permitted sender) smtp.mailfrom=bounce+4711@mailer.example.org;
+	dmarc=pass (p=quarantine dis=none) header.from=example.org
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=example.org;
+	s=mail2026; t=1793957402; bh=47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=;
+	h=From:To:Subject:Date; b=AbCdEfGhIjKlMnOpQrStUvWxYz0123456789
+From: Erika Mustermann <erika@example.org>
+Reply-To: Erika <erika.privat@example.net>
+To: Max Muster <max@example.com>, "Doe, Jane" <jane@example.com>
+Cc: team@example.org
+Subject: =?UTF-8?B?UXVhcnRhbHNiZXJpY2h0IFEzIOKAkyBFbnR3dXJmIOKYlQ==?=
+Date: Wed, 04 Nov 2026 10:30:00 +0100
+Message-ID: <20261104103000.4711@example.org>
+MIME-Version: 1.0
+User-Agent: Thunderbird/140.4
+X-Priority: 1 (Highest)
+List-Unsubscribe: <mailto:unsubscribe@example.org>
+Content-Type: multipart/mixed; boundary="mixed-1"
+
+This is a multi-part message in MIME format.
+--mixed-1
+Content-Type: multipart/related; boundary="rel-2"
+
+--rel-2
+Content-Type: multipart/alternative; boundary="alt-3"
+
+--alt-3
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Hallo zusammen,
+
+anbei der Entwurf des Quartalsberichts. Gr=C3=BC=C3=9Fe aus M=C3=BCnchen!
+Details: https://intranet.example.org/q3
+
+Erika
+
+--alt-3
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGJvZHk+PHA+SGFsbG8genVzYW1tZW4sPC9wPjxwPmFuYmVpIGRlciA8Yj5FbnR3dXJm
+PC9iPiBkZXMgUXVhcnRhbHNiZXJpY2h0cy4gR3LDvMOfZSBhdXMgTcO8bmNoZW4hPC9wPjxwPjxh
+IGhyZWY9Imh0dHBzOi8vZXZpbC5leGFtcGxlLm5ldC9sb2dpbiI+aHR0cHM6Ly9pbnRyYW5ldC5l
+eGFtcGxlLm9yZy9xMzwvYT4gJm1pZGRvdDsgPGEgaHJlZj0iaHR0cHM6Ly93d3cuZXhhbXBsZS5v
+cmcvIj5TdGFydHNlaXRlPC9hPjwvcD48aW1nIHNyYz0iY2lkOmxvZ29AZXhhbXBsZS5vcmciIGFs
+dD0iTG9nbyI+PHA+RXJpa2E8L3A+PC9ib2R5PjwvaHRtbD4=
+
+--alt-3--
+--rel-2
+Content-Type: image/png; name="logo.png"
+Content-Transfer-Encoding: base64
+Content-ID: <logo@example.org>
+Content-Disposition: inline; filename="logo.png"
+
+iVBORw0KGgoAAAANSUhEUgAAADAAAAAYCAIAAAAzn+mLAAAAMUlEQVR4nO3OQQ0AMAgEMHRhDNuT
+MBccjyYV0HrTp1R8ICQkJJQeCAkJCaUHQkJCyz6CQFTqxjW/VwAAAABJRU5ErkJggg==
+
+--rel-2--
+--mixed-1
+Content-Type: application/pdf; name="=?UTF-8?Q?Bericht_Q3.pdf?="
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="Bericht Q3.pdf"
+
+JVBERi0xLjQKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZy9QYWdlcyAyIDAgUj4+ZW5kb2JqCjIgMCBv
+Ymo8PC9UeXBlL1BhZ2VzL0tpZHNbXS9Db3VudCAwPj5lbmRvYmoKdHJhaWxlcjw8L1Jvb3QgMSAw
+IFI+PgolJUVPRgo=
+
+--mixed-1
+Content-Type: message/rfc822; name="Weitergeleitet.eml"
+Content-Disposition: attachment; filename="Weitergeleitet.eml"
+
+From: Max Muster <max@example.com>
+To: erika@example.org
+Subject: Alte Zahlen
+Date: Mon, 02 Nov 2026 08:00:00 +0100
+Content-Type: text/plain; charset=utf-8
+
+Hier die alten Zahlen.
+
+--mixed-1--

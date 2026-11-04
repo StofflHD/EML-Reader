@@ -1,0 +1,116 @@
+name: AppImage
+
+# Tests and builds the AppImage (for glibc >= 2.31) on every push and pull request, and
+# publishes it with its .sha256 file (needed by the built-in updater) for tags like v0.2.0.
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GLIBC: "2.31"
+
+jobs:
+  appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xdotool imagemagick libgl1-mesa-dri libegl1 libxkbcommon-x11-0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install zig and cargo-zigbuild (target glibc ${{ env.GLIBC }})
+        run: pip install ziglang==0.16.0 cargo-zigbuild==0.23.4
+
+      - name: Tests
+        run: cargo test --locked
+
+      - name: Build AppImage
+        run: ZIGBUILD=1 bash packaging/build-appimage.sh
+
+      - name: Check glibc requirement and checksum
+        run: |
+          BIN=target/x86_64-unknown-linux-gnu/release/eml-reader
+          NEED=$(objdump -T "$BIN" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "highest glibc symbol: $NEED"
+          test "$(printf '%s\n%s\n' "$NEED" "$GLIBC" | sort -V | tail -1)" = "$GLIBC"
+          cd dist && cat ./*.sha256 && sha256sum -c ./*.sha256
+
+      - name: Smoke test (Xvfb)
+        run: |
+          APP=$(ls dist/EML-Reader-*-x86_64.AppImage)
+          "$APP" --appimage-extract > /dev/null
+          ldd squashfs-root/usr/bin/eml-reader | tee ldd.txt
+          if grep "not found" ldd.txt; then echo "unresolved libraries" >&2; exit 1; fi
+          mkdir -p gui
+          Xvfb :99 -screen 0 1000x780x24 &
+          sleep 2
+          export DISPLAY=:99 EML_NO_UPDATE=1 LIBGL_ALWAYS_SOFTWARE=1 HOME="$(mktemp -d)"
+          squashfs-root/AppRun tests/data/sample.eml > gui/app.log 2>&1 &
+          PID=$!
+          sleep 8
+          kill -0 $PID || { cat gui/app.log; exit 1; }
+          import -window root gui/1-message.png
+          # View tabs: Headers, Structure, Source
+          xdotool mousemove 125 166 click 1
+          sleep 1
+          import -window root gui/2-headers.png
+          xdotool mousemove 200 166 click 1
+          sleep 1
+          import -window root gui/3-structure.png
+          xdotool mousemove 255 166 click 1
+          sleep 1
+          import -window root gui/4-source.png
+          # Help menu
+          xdotool mousemove 94 10 click 1
+          sleep 1
+          import -window root gui/5-help.png
+          kill $PID
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gui-test
+          path: gui/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EML-Reader-AppImage
+          path: |
+            dist/EML-Reader-*-x86_64.AppImage
+            dist/EML-Reader-*-x86_64.AppImage.sha256
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          test "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" = "$VERSION"
+          SUM=$(cut -d' ' -f1 dist/*.sha256)
+          gh release create "$GITHUB_REF_NAME" \
+            dist/EML-Reader-*-x86_64.AppImage dist/EML-Reader-*-x86_64.AppImage.sha256 \
+            --title "EML Reader $VERSION" \
+            --prerelease \
+            --notes "EML Reader $VERSION for Linux (x86_64, glibc ≥ $GLIBC, e.g. Ubuntu 20.04, Debian 11, Fedora 32 or newer).
+
+          \`\`\`bash
+          chmod +x EML-Reader-$VERSION-x86_64.AppImage
+          ./EML-Reader-$VERSION-x86_64.AppImage
+          \`\`\`
+
+          Installed versions update themselves (Help → Check for Updates).
+
+          SHA-256: \`$SUM\`"

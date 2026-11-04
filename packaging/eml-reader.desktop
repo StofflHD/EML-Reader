@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=EML Reader
+GenericName=E-Mail Viewer
+Comment=View e-mail files (.eml) with attachments and a readable header analysis
+Exec=eml-reader %F
+Icon=eml-reader
+Terminal=false
+Categories=Office;Email;Viewer;
+MimeType=message/rfc822;
+Keywords=EML;E-Mail;Mail;Message;Header;Attachment;SPF;DKIM;
+StartupWMClass=eml-reader

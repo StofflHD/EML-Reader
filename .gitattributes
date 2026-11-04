@@ -1,0 +1,5 @@
+# Shell scripts must keep LF line endings, also in Windows checkouts (built under WSL/Linux).
+*.sh text eol=lf
+packaging/AppRun text eol=lf
+# Test messages keep their exact bytes (CRLF line endings).
+*.eml binary

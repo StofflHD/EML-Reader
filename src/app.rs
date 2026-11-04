@@ -11,9 +11,12 @@ use eframe::egui::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::analysis::{self, AuthResult, Hint, Level, Link, Verdict};
+use crate::analysis::{self, AuthResult, Link, Verdict};
+use crate::checks::Checks;
 use crate::mail::{Attachment, Mail, Mailbox};
-use crate::update;
+use crate::{online, update};
+
+mod analysis_view;
 
 /// Full text of the GPL-3.0, shown in the About window (CR are dropped when shown: Windows
 /// checkouts may have CRLF line endings).
@@ -67,14 +70,16 @@ impl Default for Settings {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum View {
     Message,
+    Analysis,
     Headers,
     Structure,
     Source,
 }
 
 impl View {
-    const ALL: [(View, &'static str); 4] = [
+    const ALL: [(View, &'static str); 5] = [
         (View::Message, "Message"),
+        (View::Analysis, "Analysis"),
         (View::Headers, "Headers"),
         (View::Structure, "Structure"),
         (View::Source, "Source"),
@@ -91,10 +96,11 @@ struct Doc {
     html: Option<bool>,
     /// HTML converted to text: (columns, text).
     html_text: Option<(usize, String)>,
-    links: Vec<Link>,
-    auth_server: String,
-    auth: Vec<AuthResult>,
-    hints: Vec<Hint>,
+    /// All offline checks and the rating.
+    checks: Checks,
+    /// Result of the online check (DNS), when run.
+    online: Option<online::Report>,
+    online_rx: Option<Receiver<online::Report>>,
     /// Decoded image attachments (None = not an image we can show).
     textures: HashMap<usize, Option<egui::TextureHandle>>,
     source: Option<String>,
@@ -104,13 +110,7 @@ struct Doc {
 
 impl Doc {
     fn new(mail: Mail, path: Option<PathBuf>, title: String) -> Doc {
-        let links = mail
-            .html
-            .as_deref()
-            .map(analysis::extract_links)
-            .unwrap_or_default();
-        let (auth_server, auth) = analysis::auth_summary(&mail);
-        let hints = analysis::hints(&mail, &auth, &links, now());
+        let checks = Checks::run(&mail, now());
         Doc {
             path,
             title,
@@ -118,10 +118,9 @@ impl Doc {
             view: View::Message,
             html: None,
             html_text: None,
-            links,
-            auth_server,
-            auth,
-            hints,
+            checks,
+            online: None,
+            online_rx: None,
             textures: HashMap::new(),
             source: None,
             header_filter: String::new(),
@@ -218,6 +217,31 @@ enum Action {
     SaveEml,
     OpenUrl(String, bool),
     Copy(String),
+    /// Analysis report as HTML or text file.
+    ExportReport,
+    /// DNS queries for SPF/DMARC/DKIM/IPs (true = confirmed).
+    OnlineCheck(bool),
+    Compare,
+    /// Open message `n` of the mailbox in a tab.
+    OpenMailboxEntry(usize),
+    CloseMailbox,
+}
+
+/// One message of an opened mbox file.
+struct MboxEntry {
+    raw: Vec<u8>,
+    subject: String,
+    from: String,
+    date: Option<i64>,
+}
+
+/// An opened mailbox (mbox file): list in the side panel.
+struct Mailbox_ {
+    path: PathBuf,
+    entries: Vec<MboxEntry>,
+    filter: String,
+    /// Entry opened last (highlighted).
+    current: Option<usize>,
 }
 
 struct Confirm {
@@ -272,6 +296,10 @@ pub struct App {
     proxy_dlg: Option<String>,
     /// AppImage to start once this process has exited ("Restart Now" after an update).
     restart_exe: Option<PathBuf>,
+    mailbox: Option<Mailbox_>,
+    /// Compare-headers window: index of the second message.
+    compare: Option<usize>,
+    compare_diff_only: bool,
 }
 
 fn now() -> i64 {
@@ -304,6 +332,9 @@ impl App {
             update_rx: None,
             proxy_dlg: None,
             restart_exe: None,
+            mailbox: None,
+            compare: None,
+            compare_diff_only: false,
         };
         clean_temp();
         // Automatic update check (at most once a day, in the background).
@@ -330,9 +361,40 @@ impl App {
             self.active = i;
             return;
         }
-        let result = std::fs::read(path)
-            .map_err(|e| e.to_string())
-            .and_then(Mail::parse);
+        let data = match std::fs::read(path) {
+            Ok(d) => d,
+            Err(e) => {
+                self.error = Some(format!(
+                    "{}:
+{e}",
+                    path.display()
+                ));
+                return;
+            }
+        };
+        // mbox: several messages, shown in the side panel.
+        let ext = path
+            .extension()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        if matches!(ext.as_str(), "mbox" | "mbx")
+            || (data.starts_with(b"From ") && !data.starts_with(b"From: "))
+        {
+            if let Err(e) = self.open_mailbox(path, data) {
+                self.error = Some(e);
+            } else {
+                let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+                self.remember(&abs);
+                self.actions.push(Action::OpenMailboxEntry(0));
+            }
+            return;
+        }
+        let result = if crate::msg::is_msg(&data) {
+            crate::msg::to_eml(&data)
+        } else {
+            Ok(data)
+        }
+        .and_then(Mail::parse);
         match result {
             Ok(mail) => {
                 let title = if mail.subject.is_empty() {
@@ -388,7 +450,10 @@ impl App {
             Action::OpenDialog => {
                 if let Some(files) = self
                     .dialog()
-                    .add_filter("E-mail messages", &["eml", "EML", "msg.eml", "mht"])
+                    .add_filter(
+                        "E-mail messages",
+                        &["eml", "EML", "msg", "MSG", "mbox", "mbx", "mht"],
+                    )
                     .add_filter("All files", &["*"])
                     .pick_files()
                 {
@@ -540,6 +605,55 @@ impl App {
                 ctx.open_url(egui::OpenUrl::new_tab(url));
             }
             Action::Copy(text) => ctx.copy_text(text),
+            Action::ExportReport => {
+                let Some(doc) = self.docs.get(self.active) else {
+                    return Ok(());
+                };
+                let name = format!("Analysis {}.html", analysis::safe_file_name(&doc.title));
+                if let Some(p) = self
+                    .dialog()
+                    .set_file_name(name)
+                    .add_filter("HTML report", &["html"])
+                    .add_filter("Text report", &["txt"])
+                    .save_file()
+                {
+                    let txt = p.extension().is_some_and(|e| e.eq_ignore_ascii_case("txt"));
+                    let content = if txt {
+                        crate::report::text(&doc.mail, &doc.checks, doc.online.as_ref())
+                    } else {
+                        crate::report::html(&doc.mail, &doc.checks, doc.online.as_ref())
+                    };
+                    std::fs::write(&p, content).map_err(|e| format!("{}: {e}", p.display()))?;
+                }
+            }
+            Action::OnlineCheck(confirmed) => {
+                if self.docs.is_empty() {
+                    return Ok(());
+                }
+                if !confirmed {
+                    self.confirm = Some(Confirm {
+                        title: "Online Check".into(),
+                        text: "EML Reader asks Cloudflare's DNS service (cloudflare-dns.com) for \
+                               the SPF, DMARC and DKIM records of the message's domains, the \
+                               reverse names of the route's IP addresses and their network \
+                               (Team Cymru).\n\nOnly domain names and IP addresses are sent – no \
+                               content of the message. The sender is not contacted."
+                            .into(),
+                        button: "Check Online".into(),
+                        action: Action::OnlineCheck(true),
+                    });
+                    return Ok(());
+                }
+                self.start_online(ctx);
+            }
+            Action::Compare => {
+                if self.docs.len() < 2 {
+                    return Err("Open a second message to compare.".into());
+                }
+                self.compare = Some((self.active + 1) % self.docs.len());
+            }
+            Action::OpenMailboxEntry(i) => self.open_mailbox_entry(i)?,
+            Action::CloseMailbox => self.mailbox = None,
         }
         Ok(())
     }
@@ -565,9 +679,10 @@ impl App {
         let views = ctx.input_mut(|i| {
             [
                 (Key::Num1, View::Message),
-                (Key::Num2, View::Headers),
-                (Key::Num3, View::Structure),
-                (Key::Num4, View::Source),
+                (Key::Num2, View::Analysis),
+                (Key::Num3, View::Headers),
+                (Key::Num4, View::Structure),
+                (Key::Num5, View::Source),
                 (Key::U, View::Source),
                 (Key::H, View::Headers),
             ]
@@ -781,6 +896,13 @@ impl App {
                     self.actions.push(Action::OpenHtml(false));
                     ui.close_menu();
                 }
+                if ui
+                    .add_enabled(has_doc, egui::Button::new("Export Analysis Report …"))
+                    .clicked()
+                {
+                    self.actions.push(Action::ExportReport);
+                    ui.close_menu();
+                }
                 ui.separator();
                 if ui
                     .add_enabled(has_doc, egui::Button::new("Close").shortcut_text("Ctrl+W"))
@@ -812,7 +934,7 @@ impl App {
                     d.view = v;
                 }
                 ui.label(
-                    RichText::new("Ctrl+1 … 4, Ctrl+H headers, Ctrl+U source")
+                    RichText::new("Ctrl+1 … 5, Ctrl+H headers, Ctrl+U source")
                         .small()
                         .weak(),
                 );
@@ -857,6 +979,31 @@ impl App {
                         ui.ctx().set_zoom_factor(1.0);
                     }
                 });
+            });
+            ui.menu_button("Tools", |ui| {
+                if ui
+                    .add_enabled(has_doc, egui::Button::new("Online Check (DNS) …"))
+                    .on_hover_text("SPF/DMARC/DKIM records, DKIM signature, IP networks")
+                    .clicked()
+                {
+                    self.actions.push(Action::OnlineCheck(false));
+                    ui.close_menu();
+                }
+                if ui
+                    .add_enabled(self.docs.len() > 1, egui::Button::new("Compare Headers …"))
+                    .on_hover_text("Two open messages side by side")
+                    .clicked()
+                {
+                    self.actions.push(Action::Compare);
+                    ui.close_menu();
+                }
+                if ui
+                    .add_enabled(has_doc, egui::Button::new("Export Analysis Report …"))
+                    .clicked()
+                {
+                    self.actions.push(Action::ExportReport);
+                    ui.close_menu();
+                }
             });
             ui.menu_button("Help", |ui| {
                 if ui.button("Check for Updates …").clicked() {
@@ -976,15 +1123,23 @@ impl App {
         let mut actions = Vec::new();
 
         summary(ui, doc);
+        if analysis_view::rating_banner(ui, &doc.checks) {
+            doc.view = View::Analysis;
+        }
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             for (v, name) in View::ALL {
                 let sel = doc.view == v;
                 let label = match v {
-                    View::Headers if doc.hints.iter().any(|h| h.level == Level::Warn) => {
-                        format!("{name} ⚠")
-                    }
+                    View::Analysis => format!(
+                        "{} {name}",
+                        match doc.checks.rating {
+                            crate::checks::Rating::Safe => "✔",
+                            crate::checks::Rating::Suspicious => "⚠",
+                            crate::checks::Rating::Dangerous => "⛔",
+                        }
+                    ),
                     View::Message if !doc.mail.attachments.is_empty() => {
                         format!("{name} · 📎 {}", doc.mail.attachments.len())
                     }
@@ -1022,6 +1177,7 @@ impl App {
                         scroll,
                         &mut actions,
                     ),
+                    View::Analysis => analysis_view::analysis_view(ui, &ctx, doc, &mut actions),
                     View::Headers => headers_view(ui, doc, &mut decoded, &mut actions),
                     View::Structure => structure_view(ui, doc),
                     View::Source => {
@@ -1421,7 +1577,9 @@ impl App {
                             .heading()
                             .color(crate::theme::accent(ui.visuals().dark_mode)),
                     );
-                    ui.label("Viewer for e-mail files (.eml) written in Rust.");
+                    ui.label(
+                        "Viewer and analyser for e-mail files (.eml, .msg, mbox) written in Rust.",
+                    );
                     ui.add_space(10.0);
                     ui.separator();
                     ui.label(RichText::new(env!("CARGO_PKG_AUTHORS")).strong());
@@ -1464,6 +1622,7 @@ impl eframe::App for App {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_update();
+        self.poll_online();
         if ctx.input(|i| i.viewport().close_requested()) {
             if let Some(exe) = self.restart_exe.take() {
                 update::restart_when_exited(&exe);
@@ -1495,6 +1654,7 @@ impl eframe::App for App {
         }
 
         egui::TopBottomPanel::top("menu").show(ctx, |ui| self.menu(ui));
+        self.mailbox_panel(ctx);
         if self.docs.len() > 1 {
             egui::TopBottomPanel::top("tabs").show(ctx, |ui| self.tabs(ui));
         }
@@ -1557,6 +1717,7 @@ impl eframe::App for App {
         self.about_window(ctx);
         self.update_window(ctx);
         self.proxy_window(ctx);
+        self.compare_window(ctx);
         // Actions from windows run in the next frame.
         if !self.actions.is_empty() {
             ctx.request_repaint();
@@ -1706,7 +1867,7 @@ fn message_view(
         doc.ensure_html(cols);
     }
     let body = doc.body(prefer_html).to_string();
-    let links = doc.links.clone();
+    let links = doc.checks.links.clone();
     let images: Vec<usize> = if show_images {
         doc.mail
             .attachments
@@ -1835,25 +1996,9 @@ fn headers_view(ui: &mut Ui, doc: &mut Doc, decoded: &mut bool, actions: &mut Ve
         .auto_shrink(false)
         .show(ui, |ui| {
             let m = &doc.mail;
-            // ---- notes
-            if !doc.hints.is_empty() {
-                section(ui, "Notes", true, |ui| {
-                    for h in &doc.hints {
-                        let (icon, color) = match h.level {
-                            Level::Warn => ("⚠", ui.visuals().warn_fg_color),
-                            Level::Info => ("ℹ", ui.visuals().weak_text_color()),
-                        };
-                        ui.horizontal_top(|ui| {
-                            ui.label(RichText::new(icon).color(color).strong());
-                            ui.add(egui::Label::new(&h.text).wrap());
-                        });
-                    }
-                });
-            }
-
             // ---- security
             section(ui, "Authentication", true, |ui| {
-                if doc.auth.is_empty() {
+                if doc.checks.auth.is_empty() {
                     ui.label(
                         RichText::new(
                             "No Authentication-Results field: the message was not checked by \
@@ -1863,12 +2008,12 @@ fn headers_view(ui: &mut Ui, doc: &mut Doc, decoded: &mut bool, actions: &mut Ve
                     );
                 } else {
                     ui.horizontal_wrapped(|ui| {
-                        for r in &doc.auth {
+                        for r in &doc.checks.auth {
                             badge(ui, r);
                         }
                     });
                     ui.add_space(4.0);
-                    for (n, r) in doc.auth.iter().enumerate() {
+                    for (n, r) in doc.checks.auth.iter().enumerate() {
                         kv_row(
                             ui,
                             KEY_W,
@@ -1908,41 +2053,15 @@ fn headers_view(ui: &mut Ui, doc: &mut Doc, decoded: &mut bool, actions: &mut Ve
                             },
                         );
                     }
-                    if !doc.auth_server.is_empty() {
+                    if !doc.checks.auth_server.is_empty() {
                         ui.label(
-                            RichText::new(format!("Checked by {}", doc.auth_server))
+                            RichText::new(format!("Checked by {}", doc.checks.auth_server))
                                 .small()
                                 .weak(),
                         );
                     }
                 }
-                let sigs: Vec<String> = m
-                    .all("DKIM-Signature")
-                    .map(|f| {
-                        let tag = |t: &str| {
-                            f.raw
-                                .split(';')
-                                .find_map(|p| {
-                                    p.trim().strip_prefix(t).map(|v| v.trim().to_string())
-                                })
-                                .unwrap_or_default()
-                        };
-                        format!("{} (selector {}, {})", tag("d="), tag("s="), tag("a="))
-                    })
-                    .collect();
-                if !sigs.is_empty() {
-                    kv_row(
-                        ui,
-                        KEY_W,
-                        false,
-                        |ui| key_label(ui, "Signed by"),
-                        |ui| {
-                            for s in &sigs {
-                                ui.add(egui::Label::new(s).wrap());
-                            }
-                        },
-                    );
-                }
+                analysis_view::dkim_arc_rows(ui, &doc.checks);
             });
 
             // ---- overview
@@ -2035,6 +2154,7 @@ fn headers_view(ui: &mut Ui, doc: &mut Doc, decoded: &mut bool, actions: &mut Ve
                     true,
                     |ui| {
                         let mut prev: Option<i64> = None;
+                        let sender_hop = doc.checks.sender_ip.map(|(i, _)| i);
                         for (n, h) in m.hops.iter().enumerate() {
                             kv_row(
                                 ui,
@@ -2046,6 +2166,17 @@ fn headers_view(ui: &mut Ui, doc: &mut Doc, decoded: &mut bool, actions: &mut Ve
                                             .strong()
                                             .color(crate::theme::accent(ui.visuals().dark_mode)),
                                     );
+                                    if sender_hop == Some(n) {
+                                        ui.label(
+                                            RichText::new("sender IP").small().strong().color(
+                                                crate::theme::accent(ui.visuals().dark_mode),
+                                            ),
+                                        )
+                                        .on_hover_text(
+                                            "First public IP address of the route: the sender's \
+                                             server (or computer) as seen from outside.",
+                                        );
+                                    }
                                     if let Some(d) = h.date {
                                         ui.label(analysis::fmt_time_local(d.ts));
                                         if let Some(p) = prev {
@@ -2127,9 +2258,18 @@ fn headers_view(ui: &mut Ui, doc: &mut Doc, decoded: &mut bool, actions: &mut Ve
                                 .small()
                                 .weak(),
                         );
+                        for t in &doc.checks.times {
+                            ui.horizontal_top(|ui| {
+                                ui.label(RichText::new("⚠").color(ui.visuals().warn_fg_color));
+                                ui.add(egui::Label::new(t).wrap());
+                            });
+                        }
                     },
                 );
             }
+
+            // ---- spam filters
+            analysis_view::spam_section(ui, &doc.checks);
 
             // ---- all fields
             section(
@@ -2179,7 +2319,7 @@ fn headers_view(ui: &mut Ui, doc: &mut Doc, decoded: &mut bool, actions: &mut Ve
                             170.0,
                             n % 2 == 1,
                             |ui| {
-                                ui.add(
+                                let r = ui.add(
                                     egui::Label::new(
                                         RichText::new(&f.name)
                                             .strong()
@@ -2187,6 +2327,9 @@ fn headers_view(ui: &mut Ui, doc: &mut Doc, decoded: &mut bool, actions: &mut Ve
                                     )
                                     .wrap(),
                                 );
+                                if let Some(d) = crate::lexicon::describe(&f.name) {
+                                    r.on_hover_text(d);
+                                }
                             },
                             |ui| {
                                 let r = ui

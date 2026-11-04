@@ -63,20 +63,23 @@ jobs:
           sleep 8
           kill -0 $PID || { cat gui/app.log; exit 1; }
           import -window root gui/1-message.png
-          # View tabs: Headers, Structure, Source
-          xdotool mousemove 125 166 click 1
+          # View tabs: Analysis, Headers, Structure, Source
+          xdotool mousemove 135 197 click 1
           sleep 1
-          import -window root gui/2-headers.png
-          xdotool mousemove 200 166 click 1
+          import -window root gui/2-analysis.png
+          xdotool mousemove 194 197 click 1
           sleep 1
-          import -window root gui/3-structure.png
-          xdotool mousemove 255 166 click 1
+          import -window root gui/3-headers.png
+          xdotool mousemove 253 197 click 1
           sleep 1
-          import -window root gui/4-source.png
+          import -window root gui/4-structure.png
+          xdotool mousemove 308 197 click 1
+          sleep 1
+          import -window root gui/5-source.png
           # Help menu
-          xdotool mousemove 94 10 click 1
+          xdotool mousemove 135 10 click 1
           sleep 1
-          import -window root gui/5-help.png
+          import -window root gui/6-help.png
           kill $PID
 
       - uses: actions/upload-artifact@v4

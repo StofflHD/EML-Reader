@@ -1,0 +1,16 @@
+From alice@example.org Wed Nov  4 08:00:00 2026
+From: Alice <alice@example.org>
+To: max@example.com
+Subject: Erste Nachricht
+Date: Wed, 04 Nov 2026 08:00:00 +0000
+
+Hallo Max!
+
+From bob@example.net Wed Nov  4 09:00:00 2026
+From: Bob <bob@example.net>
+To: max@example.com
+Subject: Zweite Nachricht
+Date: Wed, 04 Nov 2026 09:00:00 +0000
+
+Zeile
+>From here on quoted.

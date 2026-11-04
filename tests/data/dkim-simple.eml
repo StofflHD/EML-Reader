@@ -1,0 +1,22 @@
+DKIM-Signature: v=1; a=rsa-sha256; c=simple/simple; d=shop.example;
+ i=@shop.example; q=dns/txt; s=mail2026; t=1793795610; h=from : to :
+ subject : date : message-id : content-type;
+ bh=1cKZj9CI06hX1AEW07+oonQjXbXPxqcby7esFQ9RTuc=;
+ b=KNLhCRNQyQkkqHp0ttzSzTYFaW5sY2sYM7RTPoSy2yBgFS+MeE/1tG7G66n/zBmqPU2+s
+ ko9eXe73WqyWAL2elhhxhWB4RGiL3Y+PYuc5SXgHHHb8+u3+zV60qhqcYUi6OhMeMwpmEbV
+ OTb8E1ZpM2rbBgncgYjUAOy3C+MJJVRR0Lf6H66ADWXGBBhz/1oFJcArdx/QYjlpyfZlCxQ
+ RUFG+TgL3vjvLchs9wQLcnDvXqvbWSYJe2ITMdHIVDkZNDmH44mXZOg1rYQ/YXKHmOfGxKk
+ Sjtzmj7SDXBvRoGf78HACzaAM4xunL86sfg1iwgpoTUOvzkT72qE90QyAEZQ==
+From: Shop Team <news@shop.example>
+To: max@example.com
+Subject:  Ihre   Bestellung 
+	123
+Date: Wed, 04 Nov 2026 09:00:00 +0000
+Message-ID: <abc@shop.example>
+Content-Type: text/plain; charset=utf-8
+
+Hallo Max,  
+
+Ihre Bestellung	 ist unterwegs.
+
+

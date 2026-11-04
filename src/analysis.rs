@@ -363,6 +363,7 @@ fn strip_tags(s: &str) -> String {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Level {
+    Danger,
     Warn,
     Info,
 }
@@ -429,6 +430,10 @@ pub fn is_risky(name: &str) -> bool {
 /// Things worth pointing out about a message.
 pub fn hints(mail: &Mail, auth: &[AuthResult], links: &[Link], now: i64) -> Vec<Hint> {
     let mut out = Vec::new();
+    let danger = |t: String| Hint {
+        level: Level::Danger,
+        text: t,
+    };
     let warn = |t: String| Hint {
         level: Level::Warn,
         text: t,
@@ -444,6 +449,10 @@ pub fn hints(mail: &Mail, auth: &[AuthResult], links: &[Link], now: i64) -> Vec<
     }
     for r in auth {
         match r.verdict() {
+            Verdict::Fail if r.method == "dmarc" => out.push(danger(format!(
+                "DMARC check failed{}: the sender address is probably forged.",
+                dom_suffix(&r.domain())
+            ))),
             Verdict::Fail => out.push(warn(format!(
                 "{} check failed ({}){}.",
                 r.method.to_uppercase(),
@@ -507,13 +516,13 @@ pub fn hints(mail: &Mail, auth: &[AuthResult], links: &[Link], now: i64) -> Vec<
     }
     let deceptive = links.iter().filter(|l| !l.warning.is_empty()).count();
     if deceptive > 0 {
-        out.push(warn(format!(
+        out.push(danger(format!(
             "{deceptive} link(s) lead somewhere else than their text shows (see Links)."
         )));
     }
     for a in &mail.attachments {
         if is_risky(&a.name) {
-            out.push(warn(format!(
+            out.push(danger(format!(
                 "The attachment \"{}\" is a program or script type – only open it if you trust \
                  the sender.",
                 a.name

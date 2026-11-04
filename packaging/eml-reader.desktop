@@ -2,11 +2,11 @@
 Type=Application
 Name=EML Reader
 GenericName=E-Mail Viewer
-Comment=View e-mail files (.eml) with attachments and a readable header analysis
+Comment=View and analyse e-mail files (.eml, .msg, mbox): attachments, header analysis, phishing checks
 Exec=eml-reader %F
 Icon=eml-reader
 Terminal=false
 Categories=Office;Email;Viewer;
-MimeType=message/rfc822;
+MimeType=message/rfc822;application/vnd.ms-outlook;application/mbox;
 Keywords=EML;E-Mail;Mail;Message;Header;Attachment;SPF;DKIM;
 StartupWMClass=eml-reader

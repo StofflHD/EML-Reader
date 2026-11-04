@@ -2,9 +2,19 @@
 
 mod analysis;
 mod app;
+mod checks;
+mod dkim;
+mod domains;
+mod files;
 mod fonts;
+mod htmlcheck;
+mod lexicon;
 mod mail;
+mod msg;
+mod online;
+mod report;
 mod theme;
+mod trace;
 mod update;
 
 fn main() -> eframe::Result {

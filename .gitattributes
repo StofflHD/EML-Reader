@@ -3,3 +3,4 @@
 packaging/AppRun text eol=lf
 # Test messages keep their exact bytes (CRLF line endings).
 *.eml binary
+*.mbox binary

@@ -8,6 +8,8 @@ mod domains;
 mod files;
 mod fonts;
 mod htmlcheck;
+#[cfg(target_os = "linux")]
+mod install;
 mod lexicon;
 mod mail;
 mod msg;

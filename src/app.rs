@@ -47,6 +47,8 @@ struct Settings {
     update_skip: String,
     /// Proxy for the updater, e.g. `http://proxy:3128` (empty = none).
     update_proxy: String,
+    /// Offer "Add to Application Menu" when started from an AppImage that is not installed.
+    install_prompt: bool,
 }
 
 impl Default for Settings {
@@ -63,6 +65,7 @@ impl Default for Settings {
             update_last_check: 0,
             update_skip: String::new(),
             update_proxy: String::new(),
+            install_prompt: true,
         }
     }
 }
@@ -296,6 +299,8 @@ pub struct App {
     proxy_dlg: Option<String>,
     /// AppImage to start once this process has exited ("Restart Now" after an update).
     restart_exe: Option<PathBuf>,
+    /// "Add to / Remove from Application Menu" dialog.
+    install_dlg: Option<InstallDlg>,
     mailbox: Option<Mailbox_>,
     /// Compare-headers window: index of the second message.
     compare: Option<usize>,
@@ -306,6 +311,17 @@ fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// "Add to Application Menu" / "Remove from Application Menu".
+enum InstallDlg {
+    /// `first`: offered automatically at start-up (with "Don't Ask Again").
+    Ask {
+        first: bool,
+    },
+    ConfirmRemove,
+    Done(String),
+    Error(String),
 }
 
 impl App {
@@ -332,11 +348,25 @@ impl App {
             update_rx: None,
             proxy_dlg: None,
             restart_exe: None,
+            install_dlg: None,
             mailbox: None,
             compare: None,
             compare_diff_only: false,
         };
         clean_temp();
+        #[cfg(target_os = "linux")]
+        if let Some(exe) = update::running_appimage() {
+            // The AppImage may have been moved or renamed: keep the menu entry pointing at it.
+            let e = exe.clone();
+            std::thread::spawn(move || {
+                crate::install::refresh_exec(&crate::install::Dirs::user(), &e)
+            });
+            // First start from an AppImage that is not in the application menu yet.
+            if app.s.install_prompt && !crate::install::is_installed(&crate::install::Dirs::user())
+            {
+                app.install_dlg = Some(InstallDlg::Ask { first: true });
+            }
+        }
         // Automatic update check (at most once a day, in the background).
         let now = now();
         if app.s.update_auto_check
@@ -1026,6 +1056,21 @@ impl App {
                     self.s.update_skip.clear();
                     ui.close_menu();
                 }
+                #[cfg(target_os = "linux")]
+                {
+                    ui.separator();
+                    if crate::install::is_installed(&crate::install::Dirs::user()) {
+                        if ui.button("Remove from Application Menu …").clicked() {
+                            self.install_dlg = Some(InstallDlg::ConfirmRemove);
+                            ui.close_menu();
+                        }
+                    } else if update::running_appimage().is_some()
+                        && ui.button("Add to Application Menu …").clicked()
+                    {
+                        self.install_dlg = Some(InstallDlg::Ask { first: false });
+                        ui.close_menu();
+                    }
+                }
                 ui.separator();
                 if ui.button("About EML Reader").clicked() {
                     self.about = true;
@@ -1526,6 +1571,103 @@ impl App {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    fn install_window(&mut self, ctx: &egui::Context) {
+        use crate::install;
+        let Some(dlg) = self.install_dlg.take() else {
+            return;
+        };
+        let mut open = true;
+        let mut next: Option<Option<InstallDlg>> = None; // Some(None) = close
+        let apps = install::apps_dir();
+        egui::Window::new("Application Menu")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_max_width(440.0);
+                match &dlg {
+                    InstallDlg::Ask { first } => {
+                        ui.label(RichText::new("Add EML Reader to the application menu?").strong());
+                        ui.label(format!(
+                            "The AppImage is moved to {} and EML Reader appears in the start menu. Updates keep working.",
+                            install::tilde(&apps)
+                        ));
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Add to Menu").clicked() {
+                                let dirs = install::Dirs::user();
+                                let r = update::running_appimage()
+                                    .ok_or_else(|| "Not started from an AppImage.".to_string())
+                                    .and_then(|a| install::install(&dirs, &a, &apps));
+                                next = Some(Some(match r {
+                                    Ok(dest) => {
+                                        // The updater uses the new location.
+                                        std::env::set_var("APPIMAGE", &dest);
+                                        InstallDlg::Done(format!(
+                                            "EML Reader is now in the application menu.\nAppImage: {}",
+                                            install::tilde(&dest)
+                                        ))
+                                    }
+                                    Err(e) => InstallDlg::Error(e),
+                                }));
+                            }
+                            if ui.button("Not Now").clicked() {
+                                next = Some(None);
+                            }
+                            if *first && ui.button("Don't Ask Again").clicked() {
+                                self.s.install_prompt = false;
+                                next = Some(None);
+                            }
+                        });
+                        if *first {
+                            ui.label(RichText::new("Also available later under Help → Add to Application Menu.").weak());
+                        }
+                    }
+                    InstallDlg::ConfirmRemove => {
+                        ui.label(RichText::new("Remove EML Reader from the application menu?").strong());
+                        ui.label(format!(
+                            "Removes the start menu entry and the icon and deletes the AppImage in {}. Your settings are kept.",
+                            install::tilde(&apps)
+                        ));
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Remove").clicked() {
+                                let dirs = install::Dirs::user();
+                                let appimage = update::running_appimage();
+                                next = Some(Some(match install::uninstall(&dirs, appimage.as_deref(), &apps) {
+                                    Ok(()) => InstallDlg::Done(
+                                        "EML Reader has been removed from the application menu. This window keeps working until you close it.".into(),
+                                    ),
+                                    Err(e) => InstallDlg::Error(e),
+                                }));
+                            }
+                            if ui.button("Cancel").clicked() {
+                                next = Some(None);
+                            }
+                        });
+                    }
+                    InstallDlg::Done(msg) | InstallDlg::Error(msg) => {
+                        if matches!(dlg, InstallDlg::Error(_)) {
+                            ui.label(RichText::new("That didn't work:").strong());
+                        }
+                        ui.label(msg);
+                        if ui.button("OK").clicked() {
+                            next = Some(None);
+                        }
+                    }
+                }
+            });
+        if !open || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            return;
+        }
+        self.install_dlg = match next {
+            Some(n) => n,
+            None => Some(dlg),
+        };
+    }
+
     fn proxy_window(&mut self, ctx: &egui::Context) {
         let Some(mut proxy) = self.proxy_dlg.take() else {
             return;
@@ -1717,6 +1859,8 @@ impl eframe::App for App {
         self.about_window(ctx);
         self.update_window(ctx);
         self.proxy_window(ctx);
+        #[cfg(target_os = "linux")]
+        self.install_window(ctx);
         self.compare_window(ctx);
         // Actions from windows run in the next frame.
         if !self.actions.is_empty() {

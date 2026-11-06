@@ -67,6 +67,11 @@ come from Team Cymru's IP-to-ASN DNS service. Only domain names and IP addresses
   AppImage, verifies its SHA-256 checksum and replaces the running AppImage; checked once a day at
   start-up (*Help → Check for Updates at Start-up*, or `EML_NO_UPDATE=1`). Same updater as
   notepad-rs.
+- **Application menu**: on the first start from the AppImage, EML Reader offers to add itself to
+  the application menu – the AppImage is moved to `~/Applications` and a desktop entry and icon are
+  created (no root rights, updates keep working). Later: *Help → Add to Application Menu* /
+  *Help → Remove from Application Menu* (removes entry, icon and the AppImage in `~/Applications`;
+  settings are kept). The entry follows when the AppImage is moved, renamed or updated.
 
 The rating is a hint, not a guarantee: a message without findings can still be fraudulent.
 
@@ -111,6 +116,7 @@ the verifier.
 - `src/app.rs`, `src/app/analysis_view.rs` – user interface (eframe/egui 0.29)
 - `src/fonts.rs` – system fallback fonts (CJK, symbols)
 - `src/update.rs` – updater (GitHub releases, SHA-256 check, replaces the AppImage)
+- `src/install.rs` – application menu entry (desktop entry + icon, `~/Applications`)
 - `src/theme.rs` – UI colour scheme "Rust" (dark and light), shared with
   [notepad-rs](https://github.com/StofflHD/notepad-rs)
 - `packaging/` – desktop file, icon (`make_icon.py`, needs pycairo), AppRun, build script
